@@ -1,22 +1,56 @@
-VOLT CLOUD ROBOT CONTROLLER
+ROBO 2.0 - ROBOT RACING CONTROLLER
 
-This architecture is: deployed webpage <-> Node.js WebSocket relay on Render <-> ESP32 over secure WebSocket.
-The ESP32 does NOT create its own Wi-Fi hotspot in this version. The ESP32 connects to a normal internet-enabled 2.4 GHz Wi-Fi network. The browser can access the deployed website from anywhere with internet, while the robot must also be online.
+Architecture
+------------
+The deployed website connects to the Node.js WebSocket relay on Render.
+The ESP32 connects to the same relay at:
 
-DEPLOY BACKEND + WEBSITE
-1. Upload the contents of this folder to a GitHub repository (preserve public/ and esp32/ folders).
-2. In Render, create a Web Service from that repository.
-3. Build command: npm install. Start command: npm start.
-4. Deploy and wait for the service to become Live. The website will be https://YOUR-SERVICE.onrender.com.
-5. In esp32/VOLT_Cloud_Robot.ino set BACKEND_HOST to the Render hostname only, e.g. volt-robot-controller.onrender.com (no https://).
-6. Set WIFI_SSID and WIFI_PASSWORD to your normal internet-enabled Wi-Fi credentials. Most classic ESP32 boards need 2.4 GHz Wi-Fi. A compatible 2.4 GHz phone hotspot can also be used.
-7. In Arduino IDE install libraries: WebSockets by Markus Sattler (arduinoWebSockets) and ArduinoJson by Benoit Blanchon. Use ESP32 Arduino Core 3.x for ledcAttach/ledcWrite pin API.
-8. Upload the ESP32 sketch. Open Serial Monitor at 115200. It should report Wi-Fi connected and then Cloud backend connected.
-9. Open the Render website; it should show ESP32 connected.
+  wss://robo-2-0.onrender.com/robot
 
-IMPORTANT SAFETY / LIMITATIONS
-- This is a prototype relay without user authentication. Do not leave a powered robot unattended; add authentication before public use.
-- Render free services may sleep when idle, so first connection can take a short while.
-- setInsecure() encrypts TLS but skips certificate validation; prototype only.
-- GPIO mapping (PWMA 18, AIN1 4, AIN2 25, PWMB 23, BIN1 13, BIN2 19) is assumed, not verified for your TTRO LF6.0 board. Verify wiring before connecting motor power.
-- TB6612FNG STBY must be HIGH, motor supply must be correct, and ESP32/motor driver grounds must be common. Never apply 5 V to ESP32 GPIO.
+The browser uses one WebSocket connection to the relay and receives
+robot_status messages. The relay forwards the existing movement protocol:
+
+  {"type":"move","x":0,"y":100,"speed":255}
+  {"type":"stop"}
+
+The movement axes remain in the -100..100 range. The speed slider selects
+a maximum from 20% to 100%, mapped to PWM 51..255. Normal button/keyboard
+driving uses 70% of that selected maximum; holding BOOST uses the full
+selected maximum. A 100% maximum therefore sends speed 255 while boosting.
+Steering sensitivity scales the x-axis in the browser and does not alter
+the WebSocket message format.
+
+PWM / ESP32 FIRMWARE
+--------------------
+The relay accepts and forwards speed values up to 255. This repository
+does not contain the ESP32 sketch, so the firmware's motor-control code
+cannot be inspected here. The repository therefore cannot establish
+whether the firmware uses the full 0..255 range or clamps requests to 200
+(or another limit).
+
+Before driving at 100%, inspect the ESP32 command handler for a clamp such
+as `min(requestedSpeed, 200)` or `const int MAX_SPEED = 200`. If present,
+change only the speed limit to 255 and make sure its PWM API accepts
+0..255. Do not change motor direction settings, GPIO assignments, Wi-Fi
+credentials, or STBY configuration for this website update.
+
+The GPIO assignments supplied for this project are AIN1=23, AIN2=22,
+PWMA=21, BIN1=19, BIN2=18, and PWMB=13. They are not verified against
+firmware in this repository.
+
+DEPLOY
+------
+1. Push the project to its GitHub repository.
+2. Render uses `render.yaml`, runs `npm install`, then `npm start`.
+3. Confirm the Render service is live and the ESP32 has connected to the
+   `/robot` WebSocket endpoint before testing the controls.
+
+SAFETY
+------
+This is a prototype relay without user authentication. Use a clear,
+unobstructed test area, keep the robot supported or wheels clear for the
+first tests, and keep access to motor power. The browser sends STOP when
+the final browser disconnects, and a newly connected ESP32 receives STOP
+before the relay reports it connected. If the robot disconnects, its
+firmware timeout remains the final protection; the website cannot stop a
+robot over a broken connection.
