@@ -7,9 +7,11 @@ const retryDelay = (attempt) => Math.min(1000 * (2 ** Math.min(attempt, 4)), 150
 export function LiveCamera({ onStatusChange }) {
   const viewportRef = useRef(null);
   const retryTimerRef = useRef(null);
+  const connectionTimerRef = useRef(null);
   const retryAttemptRef = useRef(0);
   const hasConnectedRef = useRef(false);
   const [status, setStatus] = useState('connecting');
+  const [connectionHint, setConnectionHint] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const [timestamp, setTimestamp] = useState('--:--:--');
 
@@ -24,12 +26,35 @@ export function LiveCamera({ onStatusChange }) {
     onStatusChange?.(status);
   }, [status, onStatusChange]);
 
-  useEffect(() => () => {
-    if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
-  }, []);
+  useEffect(() => {
+    connectionTimerRef.current = window.setTimeout(() => {
+      if (!hasConnectedRef.current) {
+        setStatus('unavailable');
+        setConnectionHint(getConnectionHint());
+      } else {
+        setStatus('reconnecting');
+      }
+
+      if (!retryTimerRef.current) {
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = null;
+          retryAttemptRef.current += 1;
+          setStatus('reconnecting');
+          setRetryKey((key) => key + 1);
+        }, retryDelay(retryAttemptRef.current));
+      }
+    }, 10000);
+
+    return () => {
+      window.clearTimeout(connectionTimerRef.current);
+      if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+    };
+  }, [retryKey]);
 
   function handleStreamError() {
+    window.clearTimeout(connectionTimerRef.current);
     setStatus(hasConnectedRef.current ? 'reconnecting' : 'unavailable');
+    setConnectionHint(getConnectionHint());
     if (retryTimerRef.current) return;
     retryTimerRef.current = window.setTimeout(() => {
       retryTimerRef.current = null;
@@ -40,17 +65,21 @@ export function LiveCamera({ onStatusChange }) {
   }
 
   function handleStreamLoad() {
+    window.clearTimeout(connectionTimerRef.current);
     if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
     retryAttemptRef.current = 0;
     hasConnectedRef.current = true;
+    setConnectionHint('');
     setStatus('connected');
   }
 
   function retryNow() {
+    window.clearTimeout(connectionTimerRef.current);
     if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
     retryAttemptRef.current = 0;
+    setConnectionHint('');
     setStatus(hasConnectedRef.current ? 'reconnecting' : 'connecting');
     setRetryKey((key) => key + 1);
   }
@@ -97,9 +126,9 @@ export function LiveCamera({ onStatusChange }) {
           <div className="camera-placeholder">
             <div className="camera-placeholder-icon"><VideoOff size={23} /></div>
             <strong>{statusLabel}</strong>
-            <span>{status === 'connecting' || status === 'reconnecting'
+            <span>{connectionHint || (status === 'connecting' || status === 'reconnecting'
               ? 'Waiting for the ESP32-CAM MJPEG stream.'
-              : 'Check that this device can reach the camera on the same network and that the camera is powered on.'}</span>
+              : 'Check that this device can reach the camera on the same network and that the camera is powered on.')}</span>
             {status === 'unavailable' && <button onClick={retryNow}><RefreshCw size={14} /> RETRY CAMERA</button>}
           </div>
         )}
@@ -113,4 +142,11 @@ export function LiveCamera({ onStatusChange }) {
       </div>
     </section>
   );
+}
+
+function getConnectionHint() {
+  if (window.location.protocol === 'https:' && ESP32_CAM_STREAM_URL.startsWith('http://')) {
+    return 'The secure dashboard cannot display this HTTP stream. Use the dashboard over local HTTP on the camera network or configure a secure HTTPS video relay.';
+  }
+  return 'No video response received. Check that this device can reach the camera on its network and that the camera is powered on.';
 }

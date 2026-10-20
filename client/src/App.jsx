@@ -45,6 +45,10 @@ export default function App() {
   const pushEvent = useCallback((message, type = 'info') => {
     setEvents((current) => [{ id: `${Date.now()}-${Math.random()}`, message, type, time: now() }, ...current].slice(0, 7));
   }, []);
+  const updateCameraStatus = useCallback((status) => {
+    setCameraStatus(status);
+    setCameraConnected(status === 'connected');
+  }, []);
 
   useEffect(() => {
     if (!sessionToken) return undefined;
@@ -226,7 +230,7 @@ export default function App() {
         </section>
         <div className="main-grid">
           <div className="primary-column">
-            <LiveCamera onStatusChange={(status) => { setCameraStatus(status); setCameraConnected(status === 'connected'); }} />
+            <LiveCamera onStatusChange={updateCameraStatus} />
             <TelemetryPanel telemetry={telemetry} connected={vehicleConnected} cameraConnected={cameraConnected} />
             <EventLog events={events} />
           </div>
