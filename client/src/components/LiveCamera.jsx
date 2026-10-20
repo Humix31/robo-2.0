@@ -2,7 +2,7 @@ import { Maximize2, Radio, RefreshCw, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ESP32_CAM_STREAM_URL } from '../config/camera.js';
 
-const retryDelay = (attempt) => Math.min(1000 * (2 ** Math.min(attempt, 4)), 15000);
+const retryDelay = (attempt) => Math.min(750 * (2 ** Math.min(attempt, 4)), 12000);
 
 export function LiveCamera({ onStatusChange }) {
   const viewportRef = useRef(null);
@@ -43,7 +43,7 @@ export function LiveCamera({ onStatusChange }) {
           setRetryKey((key) => key + 1);
         }, retryDelay(retryAttemptRef.current));
       }
-    }, 10000);
+    }, 5000);
 
     return () => {
       window.clearTimeout(connectionTimerRef.current);
@@ -120,6 +120,8 @@ export function LiveCamera({ onStatusChange }) {
           alt={connected ? 'Live video from the ESP32-CAM' : 'ESP32-CAM stream is not currently available'}
           onLoad={handleStreamLoad}
           onError={handleStreamError}
+          fetchPriority="high"
+          decoding="async"
           referrerPolicy="no-referrer"
         />
         {!connected && (
