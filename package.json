@@ -1,1 +1,23 @@
-{"name":"volt-cloud-robot-controller","version":"1.0.0","private":true,"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","ws":"^8.18.0"}}
+{
+  "name": "smart-car-control",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["client"],
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "dev": "concurrently -k \"node server.js\" \"npm run dev --workspace client\"",
+    "build": "npm run build --workspace client",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
