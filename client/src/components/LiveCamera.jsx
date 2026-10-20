@@ -1,13 +1,17 @@
 import { Maximize2, Radio, RefreshCw, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { ESP32_CAM_STREAM_URL } from '../config/camera.js';
 
-export function LiveCamera({ socket, cameraConnected, configured }) {
-  const videoRef = useRef(null);
-  const peerRef = useRef(null);
+const retryDelay = (attempt) => Math.min(1000 * (2 ** Math.min(attempt, 4)), 15000);
+
+export function LiveCamera({ onStatusChange }) {
+  const viewportRef = useRef(null);
+  const retryTimerRef = useRef(null);
+  const retryAttemptRef = useRef(0);
+  const hasConnectedRef = useRef(false);
+  const [status, setStatus] = useState('connecting');
+  const [retryKey, setRetryKey] = useState(0);
   const [timestamp, setTimestamp] = useState('--:--:--');
-  const [error, setError] = useState('');
-  const demoEnabled = import.meta.env.VITE_DEMO_MODE === 'true';
-  const demoUrl = import.meta.env.VITE_DEMO_VIDEO_URL || '';
 
   useEffect(() => {
     const tick = () => setTimestamp(new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()));
@@ -17,107 +21,96 @@ export function LiveCamera({ socket, cameraConnected, configured }) {
   }, []);
 
   useEffect(() => {
-    if (!socket) return undefined;
-    const handleAnswer = async ({ sdp }) => {
-      if (!peerRef.current || !sdp) return;
-      try {
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
-      } catch (caught) {
-        setError(`Camera negotiation failed: ${caught.message}`);
-      }
-    };
-    const handleCandidate = async ({ candidate }) => {
-      if (!peerRef.current || !candidate) return;
-      try { await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)); }
-      catch (caught) { setError(`Camera network candidate failed: ${caught.message}`); }
-    };
-    socket.on('camera:answer', handleAnswer);
-    socket.on('camera:ice-candidate', handleCandidate);
-    return () => {
-      socket.off('camera:answer', handleAnswer);
-      socket.off('camera:ice-candidate', handleCandidate);
-    };
-  }, [socket]);
+    onStatusChange?.(status);
+  }, [status, onStatusChange]);
 
-  async function reconnect() {
-    setError('');
-    if (!socket?.connected) {
-      setError('Authorize and connect the control session before reconnecting the camera.');
-      return;
-    }
-    if (!configured) {
-      setError('No camera source is configured. Set CAMERA_STREAM_URL and restart the server.');
-      return;
-    }
-    peerRef.current?.close();
-    let iceServers = [];
-    try {
-      iceServers = import.meta.env.VITE_ICE_SERVERS ? JSON.parse(import.meta.env.VITE_ICE_SERVERS) : [];
-      if (!Array.isArray(iceServers)) throw new Error('ICE server configuration must be a JSON array.');
-    } catch (caught) {
-      setError(`Invalid VITE_ICE_SERVERS configuration: ${caught.message}`);
-      return;
-    }
-    const peer = new RTCPeerConnection({ iceServers });
-    peerRef.current = peer;
-    peer.ontrack = (event) => { if (videoRef.current) videoRef.current.srcObject = event.streams[0]; };
-    peer.onicecandidate = (event) => {
-      if (event.candidate) socket.emit('camera:ice-candidate', { candidate: event.candidate.toJSON() });
-    };
-    peer.onconnectionstatechange = () => {
-      if (peer.connectionState === 'failed') setError('Camera connection failed. Check the camera bridge and network.');
-    };
-    try {
-      const offer = await peer.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false });
-      await peer.setLocalDescription(offer);
-      socket.emit('camera:connect');
-      socket.emit('camera:offer', { sdp: peer.localDescription, source: configured });
-    } catch (caught) {
-      setError(`Could not start the camera connection: ${caught.message}`);
-    }
+  useEffect(() => () => {
+    if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+  }, []);
+
+  function handleStreamError() {
+    setStatus(hasConnectedRef.current ? 'reconnecting' : 'unavailable');
+    if (retryTimerRef.current) return;
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      retryAttemptRef.current += 1;
+      setStatus('reconnecting');
+      setRetryKey((key) => key + 1);
+    }, retryDelay(retryAttemptRef.current));
+  }
+
+  function handleStreamLoad() {
+    if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    retryAttemptRef.current = 0;
+    hasConnectedRef.current = true;
+    setStatus('connected');
+  }
+
+  function retryNow() {
+    if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    retryAttemptRef.current = 0;
+    setStatus(hasConnectedRef.current ? 'reconnecting' : 'connecting');
+    setRetryKey((key) => key + 1);
   }
 
   async function fullscreen() {
     try {
-      if (!document.fullscreenElement) await videoRef.current?.parentElement?.requestFullscreen();
+      if (!document.fullscreenElement) await viewportRef.current?.requestFullscreen();
       else await document.exitFullscreen();
-    } catch (caught) {
-      setError(`Fullscreen is unavailable: ${caught.message}`);
+    } catch (error) {
+      setStatus(hasConnectedRef.current ? 'connected' : 'unavailable');
+      console.error('Camera fullscreen request failed:', error);
     }
   }
 
-  useEffect(() => () => peerRef.current?.close(), []);
+  const connected = status === 'connected';
+  const statusLabel = {
+    connecting: 'CONNECTING TO CAMERA',
+    connected: 'CAMERA CONNECTED',
+    unavailable: 'CAMERA UNAVAILABLE',
+    reconnecting: 'RECONNECTING TO CAMERA',
+  }[status];
 
   return (
     <section className="panel camera-panel" id="camera">
       <div className="panel-heading camera-heading">
         <div><div className="eyebrow">LIVE CAMERA</div><h2>Vehicle view</h2></div>
         <div className="camera-actions">
-          <span className={`camera-status ${cameraConnected ? 'camera-online' : ''}`}><span />{cameraConnected ? 'STREAM LIVE' : 'NO SIGNAL'}</span>
-          <button className="icon-button" onClick={reconnect} aria-label="Reconnect camera"><RefreshCw size={15} /></button>
+          <span className={`camera-status ${connected ? 'camera-online' : ''} camera-${status}`} role="status"><span />{statusLabel}</span>
+          <button className="icon-button" onClick={retryNow} aria-label="Retry camera stream"><RefreshCw size={15} /></button>
           <button className="icon-button" onClick={fullscreen} aria-label="Fullscreen camera"><Maximize2 size={15} /></button>
         </div>
       </div>
-      <div className="camera-viewport">
-        {demoEnabled && demoUrl
-          ? <video ref={videoRef} className="camera-video" src={demoUrl} autoPlay muted loop playsInline />
-          : <video ref={videoRef} className="camera-video" autoPlay muted playsInline />}
-        {!cameraConnected && !(demoEnabled && demoUrl) && (
+      <div className="camera-viewport" ref={viewportRef}>
+        <img
+          key={retryKey}
+          className="camera-image"
+          src={ESP32_CAM_STREAM_URL}
+          alt={connected ? 'Live video from the ESP32-CAM' : 'ESP32-CAM stream is not currently available'}
+          onLoad={handleStreamLoad}
+          onError={handleStreamError}
+          referrerPolicy="no-referrer"
+        />
+        {!connected && (
           <div className="camera-placeholder">
             <div className="camera-placeholder-icon"><VideoOff size={23} /></div>
-            <strong>Camera feed unavailable</strong>
-            <span>{configured ? 'Connect a camera bridge to start the live WebRTC stream.' : 'Configure a camera source to enable live streaming.'}</span>
-            <button onClick={reconnect}><RefreshCw size={14} /> RECONNECT CAMERA</button>
-            {error && <p className="inline-error">{error}</p>}
+            <strong>{statusLabel}</strong>
+            <span>{status === 'connecting' || status === 'reconnecting'
+              ? 'Waiting for the ESP32-CAM MJPEG stream.'
+              : 'Check that this device can reach the camera on the same network and that the camera is powered on.'}</span>
+            {status === 'unavailable' && <button onClick={retryNow}><RefreshCw size={14} /> RETRY CAMERA</button>}
           </div>
         )}
-        {demoEnabled && demoUrl && <span className="demo-watermark">DEMO VIDEO</span>}
-        {cameraConnected && <div className="recording-indicator"><Radio size={12} /> LIVE</div>}
+        {connected && <div className="recording-indicator"><Radio size={12} /> LIVE</div>}
         <span className="camera-time">{timestamp}</span>
-        <span className="camera-label">CAM-01 <i /> FRONT CAMERA</span>
-        {!cameraConnected && error && !(demoEnabled && demoUrl) && <p className="camera-error">{error}</p>}
+        <span className="camera-label">CAM-01 <i /> ESP32-CAM</span>
       </div>
-      <div className="camera-footer"><span><i className={cameraConnected ? 'signal-good' : ''} />{cameraConnected ? 'WEBRTC · CONNECTED' : 'WEBRTC · DISCONNECTED'}</span><span>{configured ? 'SOURCE CONFIGURED' : 'SOURCE NOT CONFIGURED'}</span></div>
+      <div className="camera-footer">
+        <span><i className={connected ? 'signal-good' : ''} />{connected ? 'MJPEG · VIDEO AVAILABLE' : `MJPEG · ${statusLabel}`}</span>
+        <span>{ESP32_CAM_STREAM_URL}</span>
+      </div>
     </section>
   );
 }

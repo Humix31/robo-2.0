@@ -66,18 +66,13 @@ Use `wss://` behind TLS for remote networks. On connect, a stop is sent before t
 
 Controller telemetry may be sent in a `telemetry` or `robot_status` WebSocket message with numeric `batteryPercentage`, `batteryVoltage`, `currentSpeed`, and `wifiSignal` fields and/or a string `motorStatus`. Missing sensor readings are displayed as **N/A**. The existing controller protocol's `robot_status` connection message remains supported.
 
-## Camera / WebRTC
+## ESP32-CAM stream
 
-The dashboard does not fabricate a camera feed. Without a connected camera peer it shows a disconnected placeholder. Configure `CAMERA_STREAM_URL` on the server and restart, then connect a camera bridge that uses an authenticated Socket.IO client to join the `camera` room with `camera:connect` and exchange:
+The dashboard displays the camera's actual MJPEG stream in the camera panel. Set the camera's IP address once in `client/src/config/camera.js`; the configured URL is built as `http://<ESP32_CAM_IP>:81/stream`. Change only `ESP32_CAM_IP` when the camera's address changes. This endpoint must match the stream route enabled by your ESP32-CAM firmware.
 
-- Dashboard to camera: `camera:offer` with `{ sdp, source }`
-- Camera to dashboard: `camera:answer` with `{ sdp }`
-- Both directions: `camera:ice-candidate` with `{ candidate }`
-- Camera status: `camera:status` with `{ connected: true|false }`
+The browser connects directly to the camera, so test the stream from the same device and network as the dashboard by opening `http://<ESP32_CAM_IP>:81/stream`. A private address such as `10.x.x.x`, `172.16-31.x.x`, or `192.168.x.x` is only reachable from a network with a route to the camera (typically the same Wi-Fi or a VPN); deploying the dashboard to Render does not make a private camera reachable. In addition, browsers can block an HTTP camera stream when embedded in the HTTPS Render dashboard as mixed content. For remote viewing, use a properly secured HTTPS streaming relay or VPN and configure the browser-accessible stream URL; do not expose the camera's raw stream publicly.
 
-The peer supplies the actual media tracks through WebRTC. Configure ICE servers suitable for your network with `VITE_ICE_SERVERS` (a JSON array); no third-party STUN server is contacted by default. Networks behind restrictive NAT may require your own TURN service. The `CAMERA_STREAM_URL` is a source identifier, not a URL that the app falsely treats as playable video.
-
-For a clearly labeled demo clip, set `VITE_DEMO_MODE=true` and `VITE_DEMO_VIDEO_URL` before building. A remote demo file must be reachable by the browser and permit playback (including any required CORS policy).
+The camera panel reports connecting, connected, unavailable, and reconnecting states. It retries after stream errors with increasing delays and does not reload a stream that remains connected. No camera firmware or GPIO wiring changes are made by this dashboard integration.
 
 ## Controls and safety
 

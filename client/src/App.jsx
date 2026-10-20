@@ -6,6 +6,7 @@ import { DirectionalControls, EmergencyStopButton, SpeedSlider } from './compone
 import { LiveCamera } from './components/LiveCamera.jsx';
 import { BatteryIndicator, ConnectionStatus, EventLog, TelemetryPanel } from './components/Telemetry.jsx';
 import { SettingsPanel } from './components/SettingsPanel.jsx';
+import { ESP32_CAM_STREAM_URL } from './config/camera.js';
 
 const initialTelemetry = {
   batteryPercentage: null,
@@ -32,7 +33,8 @@ export default function App() {
   const [mode, setMode] = useState('simulation');
   const [telemetry, setTelemetry] = useState(initialTelemetry);
   const [cameraConnected, setCameraConnected] = useState(false);
-  const [cameraConfigured, setCameraConfigured] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState('connecting');
+  const cameraConfigured = Boolean(ESP32_CAM_STREAM_URL);
   const [speed, setSpeed] = useState(50);
   const [activeDirection, setActiveDirection] = useState('');
   const [emergencyStopped, setEmergencyStopped] = useState(false);
@@ -42,16 +44,6 @@ export default function App() {
   const movementIntervalRef = useRef(null);
   const pushEvent = useCallback((message, type = 'info') => {
     setEvents((current) => [{ id: `${Date.now()}-${Math.random()}`, message, type, time: now() }, ...current].slice(0, 7));
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/camera/config')
-      .then((response) => {
-        if (!response.ok) throw new Error(`Camera configuration request failed (${response.status}).`);
-        return response.json();
-      })
-      .then((config) => setCameraConfigured(config.configured))
-      .catch((error) => setConnectionError(error.message));
   }, []);
 
   useEffect(() => {
@@ -88,7 +80,6 @@ export default function App() {
       setMode(status.mode || 'simulation');
       setTelemetry(status.telemetry || initialTelemetry);
     });
-    connection.on('camera:status', (status) => setCameraConnected(Boolean(status.connected)));
     connection.connect();
     return () => {
       connection.emit('vehicle:stop');
@@ -204,7 +195,12 @@ export default function App() {
   }
 
   const movementEnabled = socketConnected && vehicleConnected && !emergencyStopped;
-  const cameraSourceLabel = import.meta.env.VITE_DEMO_MODE === 'true' ? 'DEMO SOURCE' : cameraConfigured ? 'CAMERA READY' : 'NO SOURCE';
+  const cameraSourceLabel = {
+    connecting: 'Connecting',
+    connected: 'Streaming',
+    unavailable: 'Unavailable',
+    reconnecting: 'Reconnecting',
+  }[cameraStatus];
   const displayedSpeed = mode === 'simulation' && typeof telemetry.currentSpeed === 'number' ? telemetry.currentSpeed : 0;
 
   return (
@@ -230,7 +226,7 @@ export default function App() {
         </section>
         <div className="main-grid">
           <div className="primary-column">
-            <LiveCamera socket={socket} cameraConnected={cameraConnected} configured={cameraConfigured} />
+            <LiveCamera onStatusChange={(status) => { setCameraStatus(status); setCameraConnected(status === 'connected'); }} />
             <TelemetryPanel telemetry={telemetry} connected={vehicleConnected} cameraConnected={cameraConnected} />
             <EventLog events={events} />
           </div>
